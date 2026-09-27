@@ -19,9 +19,13 @@ export function App() {
 
   const [selectedSession, setSelectedSession] = useState<HuntingSession | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'MAP' | 'REPORTS' | 'ADMIN'>('MAP');
+  const [activeTab, setActiveTab] = useState<'MAP' | 'PLANNING' | 'REPORTS' | 'ADMIN'>('MAP');
 
-  // Sauvegarde locale pour persistance et mode hors-ligne
+  // Gestion du Tracé Libre Cartographique
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [drawingPoints, setDrawingPoints] = useState<[number, number][]>([]);
+
+  // Sauvegarde locale
   useEffect(() => {
     localStorage.setItem('pnc_sessions', JSON.stringify(sessions));
   }, [sessions]);
@@ -30,7 +34,7 @@ export function App() {
     localStorage.setItem('pnc_reports', JSON.stringify(reports));
   }, [reports]);
 
-  // Surveillance active du Timeout automatique (Côté Frontend Client)
+  // Surveillance active du Timeout automatique (Frontend Client)
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date().getTime();
@@ -50,12 +54,26 @@ export function App() {
           return s;
         })
       );
-    }, 15000); // Test toutes les 15 secondes
+    }, 15000);
 
     return () => clearInterval(interval);
   }, []);
 
-  const handleStartHunt = (zoneId: string, durationHours: number, notes: string) => {
+  const handleMapClickForDrawing = (lat: number, lng: number) => {
+    setDrawingPoints((prev) => [...prev, [lat, lng]]);
+  };
+
+  const handleClearDrawing = () => {
+    setDrawingPoints([]);
+  };
+
+  // Démarrer une battue en direct
+  const handleStartHunt = (
+    zoneId: string,
+    durationHours: number,
+    notes: string,
+    customPolygon?: [number, number][]
+  ) => {
     const zone = INITIAL_ZONES.find((z) => z.id === zoneId) || INITIAL_ZONES[0];
     const now = new Date();
     const timeout = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
@@ -69,12 +87,50 @@ export function App() {
       status: 'ACTIVE',
       startTime: now.toISOString(),
       autoTimeoutAt: timeout.toISOString(),
-      coordinates: zone.coordinates,
+      coordinates: customPolygon && customPolygon.length >= 3 ? customPolygon : zone.coordinates,
       notes: notes || 'Battue déclarée en direct par le chef de traque.',
       leadHunterContact: '06.00.00.00.00'
     };
 
     setSessions((prev) => [newSession, ...prev]);
+    setIsDrawingMode(false);
+    setActiveTab('MAP');
+  };
+
+  // Planifier une battue sur une semaine / un mois
+  const handlePlanHunt = (
+    title: string,
+    zoneId: string,
+    startDate: string,
+    startTime: string,
+    endTime: string,
+    notes: string,
+    recurrenceDays: string[],
+    customPolygon?: [number, number][]
+  ) => {
+    const zone = INITIAL_ZONES.find((z) => z.id === zoneId) || INITIAL_ZONES[0];
+    const startIso = new Date(`${startDate}T${startTime}:00`).toISOString();
+    const endIso = new Date(`${startDate}T${endTime}:00`).toISOString();
+
+    const recurrenceText = recurrenceDays.length > 0 ? ` (Récurrence : ${recurrenceDays.join(', ')})` : '';
+
+    const newSession: HuntingSession = {
+      id: `plan-${Date.now()}`,
+      zoneId: zone.id,
+      zoneName: `${zone.name} - ${title}`,
+      commune: zone.commune,
+      societyName: 'ACCA Territoriale',
+      status: 'PLANNED',
+      startTime: startIso,
+      endTime: endIso,
+      autoTimeoutAt: endIso,
+      coordinates: customPolygon && customPolygon.length >= 3 ? customPolygon : zone.coordinates,
+      notes: `${notes || 'Battue programmée au calendrier.'}${recurrenceText}`,
+      leadHunterContact: '06.00.00.00.00'
+    };
+
+    setSessions((prev) => [newSession, ...prev]);
+    setIsDrawingMode(false);
     setActiveTab('MAP');
   };
 
@@ -103,11 +159,12 @@ export function App() {
   };
 
   const activeSessionsCount = sessions.filter((s) => s.status === 'ACTIVE').length;
+  const plannedSessions = sessions.filter((s) => s.status === 'PLANNED');
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* En-tête de navigation principale */}
-      <header className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 py-3">
+      <header className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-3xl">🌿</span>
@@ -116,7 +173,7 @@ export function App() {
                 Partage Nature <span className="text-emerald-400 font-medium text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">Vigilance Chasse</span>
               </h1>
               <p className="text-xs text-slate-400 hidden sm:block">
-                Tarn & Occitanie • Coexistence sereine en forêt
+                Carte Topo IGN & OpenTopoMap • Cohabitation apaisée en forêt
               </p>
             </div>
           </div>
@@ -131,7 +188,17 @@ export function App() {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              🗺️ Carte
+              🗺️ Carte Topo IGN
+            </button>
+            <button
+              onClick={() => setActiveTab('PLANNING')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'PLANNING'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              📅 Calendrier ({plannedSessions.length})
             </button>
             <button
               onClick={() => setActiveTab('REPORTS')}
@@ -168,11 +235,11 @@ export function App() {
             <div>
               <p className="text-sm font-bold text-white">
                 {activeSessionsCount > 0
-                  ? `${activeSessionsCount} battue(s) actuellement en cours dans votre secteur`
-                  : 'Aucune battue signalée en ce moment dans votre secteur'}
+                  ? `${activeSessionsCount} battue(s) actuellement active(s) sur le terrain`
+                  : 'Aucune battue signalée en direct en ce moment dans votre secteur'}
               </p>
               <p className="text-xs text-slate-400">
-                Pensez à porter des couleurs visibles et à tenir les animaux de compagnie à proximité.
+                Fond topographique haute précision • Consultez le calendrier pour vos sorties du week-end.
               </p>
             </div>
           </div>
@@ -188,6 +255,7 @@ export function App() {
           </div>
         </div>
 
+        {/* VUE 1 : CARTE INTERACTIVE TOPO IGN */}
         {activeTab === 'MAP' && (
           <div className="flex flex-col gap-6">
             <MapView
@@ -196,6 +264,9 @@ export function App() {
               selectedSession={selectedSession}
               onSelectSession={setSelectedSession}
               onAddReportClick={() => setIsReportModalOpen(true)}
+              isDrawingMode={isDrawingMode}
+              drawingPoints={drawingPoints}
+              onMapClickForDrawing={handleMapClickForDrawing}
             />
 
             {/* Fiches récapitulatives des zones sous la carte */}
@@ -229,7 +300,7 @@ export function App() {
 
                     <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
                       <span>{session.societyName}</span>
-                      <span className="text-emerald-400 font-semibold hover:underline">Voir détails →</span>
+                      <span className="text-emerald-400 font-semibold hover:underline">Localiser sur carte →</span>
                     </div>
                   </div>
                 );
@@ -238,6 +309,60 @@ export function App() {
           </div>
         )}
 
+        {/* VUE 2 : CALENDRIER PRÉVISIONNEL (SEMAINE / MOIS) */}
+        {activeTab === 'PLANNING' && (
+          <div className="flex flex-col gap-6">
+            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-lg">
+              <h3 className="font-bold text-lg text-white mb-2 flex items-center gap-2">
+                <span>📅</span> Calendrier des Battues (Semaine & Mois)
+              </h3>
+              <p className="text-xs text-slate-400 mb-6">
+                Anticipez vos randonnées, sessions de trail et sorties VTT en consultant les créneaux officiellement déclarés par les sociétés de chasse.
+              </p>
+
+              <div className="flex flex-col gap-4">
+                {plannedSessions.length === 0 ? (
+                  <p className="text-sm text-slate-500 italic py-6 text-center">
+                    Aucune battue prévisionnelle enregistrée pour le moment.
+                  </p>
+                ) : (
+                  plannedSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      onClick={() => {
+                        setSelectedSession(session);
+                        setActiveTab('MAP');
+                      }}
+                      className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700/70 p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer transition-all"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-bold text-orange-400 bg-orange-500/10 px-2.5 py-0.5 rounded-full border border-orange-500/20">
+                            Prévue le {new Date(session.startTime).toLocaleDateString()}
+                          </span>
+                          <span className="text-xs text-slate-400">• {session.commune}</span>
+                        </div>
+                        <h4 className="font-bold text-white text-base">{session.zoneName}</h4>
+                        <p className="text-xs text-slate-300 mt-1">{session.notes}</p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-700">
+                          ⏰ {new Date(session.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {session.endTime ? new Date(session.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Fin de journée'}
+                        </span>
+                        <span className="text-xs text-emerald-400 font-bold hover:underline">
+                          Voir sur la carte →
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VUE 3 : SIGNALEMENTS */}
         {activeTab === 'REPORTS' && (
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
@@ -282,12 +407,23 @@ export function App() {
           </div>
         )}
 
+        {/* VUE 4 : ESPACE ACCA & DESSIN */}
         {activeTab === 'ADMIN' && (
-          <HunterAdminPanel
-            sessions={sessions}
-            onStartHunt={handleStartHunt}
-            onStopHunt={handleStopHunt}
-          />
+          <div className="flex flex-col gap-6">
+            <HunterAdminPanel
+              sessions={sessions}
+              onStartHunt={handleStartHunt}
+              onPlanHunt={handlePlanHunt}
+              onStopHunt={handleStopHunt}
+              isDrawingMode={isDrawingMode}
+              setIsDrawingMode={(val) => {
+                setIsDrawingMode(val);
+                if (val) setActiveTab('MAP'); // Bascule directement sur la carte pour dessiner
+              }}
+              drawingPoints={drawingPoints}
+              onClearDrawing={handleClearDrawing}
+            />
+          </div>
         )}
       </main>
 
@@ -306,7 +442,7 @@ export function App() {
 
       {/* Pied de page */}
       <footer className="border-t border-slate-800 bg-slate-900 py-6 text-center text-xs text-slate-500">
-        <p>Partage Nature • Initiative pour la cohabitation pacifique et la sécurité des espaces ruraux et forestiers.</p>
+        <p>Partage Nature • Fonds IGN & OpenTopoMap • Découpage et planification territoriale.</p>
         <p className="mt-1">Compatible PWA & consultation hors-ligne sur sentiers.</p>
       </footer>
     </div>
